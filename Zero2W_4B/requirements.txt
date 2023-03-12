@@ -1,2 +1,0 @@
-Adafruit-Blinka>=8.0.0
-Adafruit-PlatformDetect>=3.39.0

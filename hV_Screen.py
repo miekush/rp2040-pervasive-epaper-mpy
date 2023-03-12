@@ -15,11 +15,13 @@
 # @see https://creativecommons.org/licenses/by-nc-sa/4.0/
 #
 
+# modified by miekush
+
 __copyright__ = "Copyright (C) 2010-2023 Rei Vilo"
 __licence__ = "CC BY-NC-SA 4.0 - Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International"
 __version__ = "6.0.6"
 
-from machine import Pin, SPI, I2C
+from machine import Pin
 import time
 from hV_Fonts import *
 
@@ -33,36 +35,14 @@ class Colour:
     GREY = 0b0111101111101111  # Grey
     GRAY = 0b0111101111101111  # American-English variant for grey
 
-# @brief Touch events
-
-
-class touchEvent:
-    NONE = 0  # no event
-    PRESS = 1  # press event
-    RELEASE = 2  # release event
-    MOVE = 3  # move event
-    STRING = ["NONE", "PRESS", "RELEASE", "MOVE"]
 
 # @brief Main class
-
 
 class Screen:
     # GPIOs for Raspberry Pi Pico
     # Pin refers to the GPIO, not the pin number
     # Board
     boardLED = Pin(25, Pin.OUT)
-
-    # Touch
-    touchINT = Pin(2, Pin.IN) 
-    touchRESET = Pin(3, Pin.OUT)
-    i2cAddress = 0x41
-
-    # Panel
-    panelCS = Pin(17, Pin.OUT)
-    flashCS = Pin(10, Pin.OUT)
-    panelRESET = Pin(11, Pin.OUT)
-    panelDC = Pin(12, Pin.OUT)
-    panelBUSY = Pin(13, Pin.IN)
 
     # Parameters
     _fontSize = 0
@@ -80,33 +60,6 @@ class Screen:
     index00_data = [0xcf, 0x8d]  # PSR, constant
     # index50_data goes here
 
-    # Screen variables for 2.71-Touch
-    _screenSizeV = 264  # vertical = wide size
-    _screenSizeH = 176  # horizontal = small size
-    _screenDiagonal = 270  # 270 for touch
-    _screenColourBits = 2
-    _bufferDepth = _screenColourBits  # 2 colours
-    _bufferSizeV = _screenSizeV  # vertical = wide size
-    _bufferSizeH = (_screenSizeH >> 3)  # horizontal = small size 112 / 8
-    _pageColourSize = _bufferSizeV * _bufferSizeH
-    _newImage = bytearray(_pageColourSize)  # Next
-    _oldImage = bytearray(_pageColourSize)  # Previous
-    _i2cAddress = 0x41
-
-    # Touch
-    _touchPrevious = touchEvent.NONE
-    _touchX = 0
-    _touchY = 0
-    _touchXmin = 0
-    _touchYmin = 0
-    _touchXmax = 0
-    _touchYmax = 0
-
-    # _i2c = busio.I2C(scl=board.SCL, sda=board.SDA, frequency=400000)
-    _i2c = I2C(0, scl=Pin(5), sda=Pin(4), freq=400_000)
-    # _spi = busio.SPI(board.SCLK, board.MOSI, board.MISO)
-    _spi = SPI(0, 8_000_000, sck=Pin(18), mosi=Pin(19), miso=Pin(16))
-
     # Utilities
     def __bitSet(self, value, bit_index):
         return value | (1 << bit_index)
@@ -117,29 +70,18 @@ class Screen:
     def __bitRead(self, value, bit_index):
         return value & (1 << bit_index)
 
-    def __checkRange(self, value, valueMin, valueMax):
-        localMin = min(valueMin, valueMax)
-        localMax = max(valueMin, valueMax)
-
-        return min(max(localMin, value), localMax)
-
-    def __mapValue(self, value, valueMin, valueMax, targetMin, targetMax):
-        target = (value - valueMin) * (targetMax - targetMin) / \
-            (valueMax - valueMin) + targetMin
-        return int(target)
-
     # SPI utilities
     def __waitBusy(self):
         # LOW = busy, HIGH = ready
-        while (self.panelBUSY.value() != 1):
+        while (self.busy.value() != 1):
             time.sleep(0.032)
 
     def __sendCommand8(self, command):
         """
         print("%16s [0x%02x]" % ("__sendCommand8", command))
         """
-        self.panelDC.value(0)  # DC Low = Command
-        self.panelCS.value(0)  # CS Low = Select
+        self.dc.value(0)  # DC Low = Command
+        self.cs.value(0)  # CS Low = Select
 
         time.sleep(0.050)
         self._spi.write(bytearray([command]))
@@ -155,22 +97,22 @@ class Screen:
             print("...", end=" ")
         print()
         """
-        self.panelDC.value(0)  # DC Low = Command
-        self.panelCS.value(0)  # CS Low = Select
+        self.dc.value(0)  # DC Low = Command
+        self.cs.value(0)  # CS Low = Select
 
         time.sleep(0.050)
         self._spi.write(bytearray([index]))
         time.sleep(0.050)
 
-        self.panelCS.value(1)  # CS High = Unselect
-        self.panelDC.value(1)  # DC High = Data
-        self.panelCS.value(0)  # CS Low = Select
+        self.cs.value(1)  # CS High = Unselect
+        self.dc.value(1)  # DC High = Data
+        self.cs.value(0)  # CS Low = Select
 
         time.sleep(0.050)
         self._spi.write(bytearray(data))
         time.sleep(0.050)
 
-        self.panelCS.value(1)  # CS High = Unselect
+        self.cs.value(1)  # CS High = Unselect
 
     # COG utilities
     def __COG_initial(self):
@@ -195,64 +137,58 @@ class Screen:
         # _flag50b goes here
 
         self.__sendCommand8(0x04)  # Power on
-        self.panelCS.value(1)  # CS# = 1
+        self.cs.value(1)  # CS# = 1
         self.__waitBusy()
 
         self.__sendCommand8(0x12)  # Display Refresh
-        self.panelCS.value(1)  # CS# = 1
+        self.cs.value(1)  # CS# = 1
         self.__waitBusy()
 
     def __COG_powerOff(self):
         self.__sendCommand8(0x02)  # Turn off DC/DC
-        self.panelCS.value(1)  # CS# = 1
+        self.cs.value(1)  # CS# = 1
         self.__waitBusy()
 
     # Functions
-    def __init__(self):
-        pass
+    def __init__(self, spi, cs, reset, dc, busy, screenW, screenH):
+        
+        self._spi = spi
+        self.cs = Pin(cs, Pin.OUT)
+        self.reset = Pin(reset, Pin.OUT)
+        self.dc =  Pin(dc, Pin.OUT)
+        self.busy =  Pin(busy, Pin.IN)
+
+        self._screenSizeV = screenW
+        self._screenSizeH = screenH
+        
+        # Screen variables for 3.7
+        self._screenColourBits = 1 #mono
+        self._bufferDepth = self._screenColourBits
+        self._bufferSizeV = self._screenSizeV  # vertical = wide size
+        self._bufferSizeH = (self._screenSizeH >> 3)  # horizontal = small size 112 / 8
+        self._pageColourSize = self._bufferSizeV * self._bufferSizeH
+        self._newImage = bytearray(self._pageColourSize)  # Next
+        self._oldImage = bytearray(self._pageColourSize)  # Previous
 
     def __del__(self):
         pass
 
     def begin(self):
-        self.flashCS.value(1)
-        self.panelCS.value(1)
+        self.cs.value(1)
 
         # Panel reset
         time.sleep(0.005)
-        self.panelRESET.value(1)
+        self.reset.value(1)
         time.sleep(0.005)
-        self.panelRESET.value(0)
+        self.reset.value(0)
         time.sleep(0.010)
-        self.panelRESET.value(1)
+        self.reset.value(1)
         time.sleep(0.005)
-        self.panelCS.value(1)
+        self.cs.value(1)
         time.sleep(0.005)
-
-        # Touch reset
-        self.touchRESET.value(1)
-        time.sleep(0.100)
-        self.touchRESET.value(0)
-        time.sleep(0.100)
-        self.touchRESET.value(1)
-        time.sleep(0.100)
-
-        # I2C
-        self._i2c.writeto(self._i2cAddress, bytes([0x20]))
-        bufferRead = bytearray(10)
-        self._i2c.readfrom_into(self._i2cAddress, bufferRead)
-
-        self._touchXmin = 0
-        self._touchXmax = bufferRead[0] + (bufferRead[1] << 8)
-        self._touchYmin = 0
-        self._touchYmax = bufferRead[2] + (bufferRead[3] << 8)
 
         # Font and touch
         self.selectFont(0)
-        self._touchPrevious = touchEvent.NONE
-
-    def WhoAmI(self):
-        return "iTC 2'70-Touch"
 
     def flush(self):
         # Configure
@@ -399,9 +335,6 @@ class Screen:
     def screenDiagonal(self):
         return self._screenDiagonal
 
-    def screenColourBits(self):
-        return self._screenColourBits
-
     def __getZT(self, x1, y1):
         return x1 * self._bufferSizeH + (y1 >> 3), 7 - (y1 % 8)
 
@@ -539,9 +472,6 @@ class Screen:
 
                 wx1 += 1
 
-    def setPenSolid(self, flag=True):
-        self._penSolid = flag
-
     def rectangle(self, x1, y1, x2, y2, colour):
         if (self._penSolid == False):
             self.line(x1, y1, x1, y2, colour)
@@ -562,103 +492,6 @@ class Screen:
 
     def dRectangle(self, x0, y0, dx, dy, colour):
         self.rectangle(x0, y0, x0 + dx - 1, y0 + dy - 1, colour)
-
-    # Touch functions
-    def getTouchInterrupt(self):
-        return (self.touchINT.value() == 0)
-
-    def getTouch(self):
-        _number = bytearray(1)
-
-        try:
-            self._i2c.writeto(self._i2cAddress, bytes([0x10]))
-            self._i2c.readfrom_into(self._i2cAddress, _number)
-        except:
-            _number = [0]
-
-        x0 = 0
-        y0 = 0
-        z0 = 0
-        t0 = 0
-
-        if (_number[0] > 0):
-            bufferRead = bytearray(5)
-            self._i2c.writeto(self._i2cAddress, bytes([0x11]))
-            self._i2c.readfrom_into(self._i2cAddress, bufferRead)
-
-            _status = bufferRead[0]
-            x0 = (bufferRead[1] << 8) + bufferRead[2]
-            y0 = (bufferRead[3] << 8) + bufferRead[4]
-
-            if (_status & 0x80):  # touch
-                if (self._touchPrevious != touchEvent.NONE):
-                    t0 = touchEvent.MOVE
-                else:
-                    t0 = touchEvent.PRESS
-
-                # Keep position for next release
-                self._touchPrevious = touchEvent.PRESS
-                self._touchX = x0
-                self._touchY = y0
-
-            else:
-                t0 = touchEvent.RELEASE
-
-            z0 = 0x16
-
-        elif (self._touchPrevious != touchEvent.NONE):
-            # Take previous position for release
-            self._touchPrevious = touchEvent.NONE
-            t0 = touchEvent.RELEASE
-            x0 = self._touchX
-            y0 = self._touchY
-            z0 = 0x16
-
-        elif (self._touchPrevious == touchEvent.NONE):
-            t0 = touchEvent.NONE
-            z0 = 0
-
-        x = 0
-        y = 0
-        z = z0
-        t = t0
-
-        if (z > 0x10):
-            x0 = self.__checkRange(x0, self._touchXmin, self._touchXmax)
-            y0 = self.__checkRange(y0, self._touchYmin, self._touchYmax)
-
-            if (self._orientation == 0):  # ok
-                x = self.__mapValue(x0, self._touchXmin, self._touchXmax,
-                                    0, self._screenSizeH)
-                y = self.__mapValue(y0, self._touchYmin, self._touchYmax,
-                                    0, self._screenSizeV)
-
-            elif (self._orientation == 1):  # ok
-                x = self.__mapValue(y0, self._touchYmin, self._touchYmax,
-                                    0, self._screenSizeV)
-                y = self.__mapValue(x0, self._touchXmin, self._touchXmax,
-                                    self._screenSizeH, 0)
-
-            elif (self._orientation == 2):  # ok
-                x = self.__mapValue(x0, self._touchXmin, self._touchXmax,
-                                    self._screenSizeH, 0)
-                y = self.__mapValue(y0, self._touchYmin, self._touchYmax,
-                                    self._screenSizeV, 0)
-
-            elif (self._orientation == 3):  # ok
-                x = self.__mapValue(y0, self._touchYmin, self._touchYmax,
-                                    self._screenSizeV, 0)
-                y = self.__mapValue(x0, self._touchXmin, self._touchXmax,
-                                    0, self._screenSizeH)
-
-            return True, x, y, z, t
-
-        else:
-            return False, 0, 0, 0, 0
-
-    def clearTouch(self):
-        while (self.getTouchInterrupt()):
-            time.sleep(0.010)
 
     # Font functions
     def setFontSolid(self, flag):
